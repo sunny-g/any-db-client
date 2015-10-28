@@ -7,7 +7,7 @@ let {
 let random = new require('random-js')();
 
 class Subscription {
-  constructor(name, query, anyDb, onReady) {
+  constructor(name, query, anyDb, callback) {
     this.name = name;
     this.query = query;
     this.anyDb = anyDb;
@@ -15,6 +15,8 @@ class Subscription {
 
     this.data = [];
     this.dataIds = {};
+    anyDb.cache.addCollection(name);
+    this.collection = anyDb.cache[name];
     this.ready = false;
 
     // onChange listeners, invoked when anything is added, removed or changed in associated collections
@@ -28,12 +30,14 @@ class Subscription {
     // TODO: does the query need to be wrapped in an Array?
     this.subId = this.ddp.subscribe(name, [query], (err) => {
       if (err) {
+        // TODO: better error handling, should retry after some time-limit
         console.log('error subscribing to:', name, err);
-        return err;
+        callback(err, null);
+      } else {
+        this.ready = true;
+        this._dispatchChange();
+        callback(null, this);
       }
-      this.ready = true;
-      this._dispatchChange();
-      return typeof onReady === "function" ? onReady(this) : void 0;
     });
 
     // TODO: will handling tracking of the sub here result in a memory leak?
@@ -42,18 +46,22 @@ class Subscription {
   }
 
   /* these would be modified if switching to minimongo */
-  // TODO: could `fields` be renamed to something more descriptive?
   addedBefore(id, fields, before) {
     let doc = fields;
     doc._id = id;
+    // let dataIds know there's a new doc
     this.dataIds[id] = true;
     if (before === null) {
+      // when adding a new doc to the end
       this.data = this.data.concat(doc);
     } else {
+      // when adding a new doc in the middle of the sub
+        // 
+
       let index = findDocIdIndex(before, this.data);
       if (index < 0) { throw new Error('Expected to find before id', before); }
       this.data = R.clone(sub.data);
-      this.data.splice(i, 0, doc);
+      this.data.splice(index, 0, doc);
     }
     this._dispatchChange();
   }
@@ -85,7 +93,7 @@ class Subscription {
   removed(id) {
     let index = findDocIdIndex(id, this.data);
     if (index < 0) { throw new Error('Expected to find id', id); }
-    // currently unused
+    // oldDoc is currently unused
     let oldDoc = this.data.splice(index, 1)[0];
     delete this.dataIds[id];
     this._dispatchChange();
