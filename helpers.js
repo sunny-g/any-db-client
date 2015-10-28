@@ -56,7 +56,7 @@ function findDocIdIndex(id, docs) {
 }
 
 /**
- * 
+ * deep extends doc with fields, deletes undefined values
  */
 function changeDoc(doc, fields) {
   return deleteUndefined(U.extendDeep(doc, fields));

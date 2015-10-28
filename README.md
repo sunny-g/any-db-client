@@ -31,16 +31,23 @@ AnyDb.initialize({
   debug: true   // optional, for extra logging
 });
 
-ddpClient.connect(function() {  // after connecting...
-  var UsersSub = AnyDb.subscribe('allUsers', [], function(sub) {
-    console.log('sub ready', sub.data);
-    sub.onChange((data) => {
+// using a subset of ES7...
+(async function() {
+  try {
+    await ddpClient.connect();
+    var UsersSub = await AnyDb.subscribe('allUsers', []);
+    console.log('UsersSub ready', UsersSub);
+  
+    UsersSub.onChange((data) => {
       // data is the entire subscription's dataset
-      console.log("new sub data", data);
+      console.log("new UsersSub data:", data);
     });
-  };
-  UsersSub.stop();
-});
+
+    UsersSub.stop();
+  } catch (err) {
+    // handle errors
+  }
+})();
 ```
 
 On the server, set up your publications as you would with [ccorcos:any-db](https://github.com/ccorcos/meteor-any-db) (this example uses [ostrio:neo4jdriver](https://github.com/VeliovGroup/ostrio-neo4jdriver), but you can use any Fiber-wrapped database library):

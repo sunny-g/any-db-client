@@ -24,7 +24,7 @@ AnyDb.initialize = function(opts) {
       cleared
     } = parseDDPMsg.call(this, msg);
 
-    log('id:', id, 'fields:', fields, 'positions:', positions, 'cleared:', cleared);
+    log('id:', id, 'fields:', fields, 'positions:', positions, 'cleared:', cleared, 'original msg:', msg);
 
     if (msg.msg === 'added') {
       return added.call(this, id, fields, positions);
@@ -33,23 +33,30 @@ AnyDb.initialize = function(opts) {
     } else if (msg.msg === 'removed') {
       return removed.call(this, id);
     } else {
-      log('unhandled DDP msg', msg);
+      console.error('unhandled DDP msg', msg);
     }
   });
 };
 
-AnyDb.subscribe = function(name, query, onReadyFn) {
-  var sub = new Subscription(name, query, this, onReadyFn);
-  sub.stop = () => {
-    // delete anyDb.this[this.subId];   originally in Subscription
-    // TODO: how do we delete this sub from the anyDb instance? will handling deletion of the sub here result in a memory leak?
-    Subscription.prototype.stop.call(sub);
-    delete this.subs[sub.subId];
-  }
-  return sub;
+/**
+ * returns {Promise}
+ */
+AnyDb.subscribe = function(name, query) {
+  return new Promise((resolve, reject) => {
+    var sub = new Subscription(name, query, this, (err, sub) => {
+      if (err) {
+        reject(err);
+      } else {
+        sub.stop = () => {
+          Subscription.prototype.stop.call(sub);
+          delete this.subs[sub.subId];
+        }
+        resolve(sub);
+      }
+    });
+  });
 };
 
-/* AnyDb would be modified if switching to minimongo */
 /**
  * Finds a document by id throughout all subscription's datasets
  */
@@ -86,11 +93,13 @@ function changed(id, fields, positions, cleared) {
     }
   }
 
+  // TODO: annotate this
+  // this handles position changes
   let memoizedFind = R.memoize(this.find);
   for (let subId in positions) {
     let before = positions[subId];
     let sub = this.subs[subId];
-    // TODO: does this note still apply to us?
+    // TODO: does the following note still apply to us?
     // sub could be null if logout and in really quickly
     if (!sub) { return; }
     if (sub.dataIds[id]) {
