@@ -56,6 +56,8 @@ AnyDb.subscribe = function(name, query) {
         resolve(sub);
       }
     });
+    // add this subscription to our anyDb's subs
+    this.subs[sub.subId] = sub;
   });
 };
 

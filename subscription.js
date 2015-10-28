@@ -39,10 +39,6 @@ class Subscription {
         callback(null, this);
       }
     });
-
-    // TODO: will handling tracking of the sub here result in a memory leak?
-    // add this subscription to our anyDb's subs
-    this.anyDb.subs[this.subId] = this;
   }
 
   /* these would be modified if switching to minimongo */
