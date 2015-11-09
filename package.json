@@ -3,15 +3,25 @@
   "version": "0.1.1",
   "description": "NPM client for subscribing to custom Meteor publications via ccorcos:any-db",
   "main": "index.js",
+  "scripts": {
+    "test": "babel-node tests.js"
+  },
   "dependencies": {
     "minimongo-cache": "0.0.35",
     "ramda": "^0.18.0",
     "random-js": "^1.0.8",
     "underscore": "^1.8.3"
   },
-  "devDependencies": {},
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "devDependencies": {
+    "babel": "^6.0.15",
+    "babel-cli": "^6.1.2",
+    "babel-core": "^6.1.2",
+    "babel-preset-es2015": "^6.1.2",
+    "babel-preset-stage-0": "^6.1.2",
+    "babel-tape-runner": "^1.3.0",
+    "blue-tape": "^0.1.10",
+    "mock-socket": "^0.8.2",
+    "tape": "^4.2.2"
   },
   "repository": {
     "type": "git",

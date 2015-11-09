@@ -1,11 +1,15 @@
-let { U, R } = require('./utils.js');
-let {
+const { U, R } = require('./utils.js');
+const {
   changeDoc,
-  findDocIdIndex
+  findIndexById,
+  newSortIndex
 } = require('./helpers.js');
 
-let random = new require('random-js')();
+const random = new require('random-js')();
 
+/**
+ * Creates a subscription and Minimongo collection to an AnyDb publication
+ */
 class Subscription {
   constructor(name, query, anyDb, callback) {
     this.name = name;
@@ -13,11 +17,13 @@ class Subscription {
     this.anyDb = anyDb;
     this.ddp = anyDb.ddp;
 
-    this.data = [];
+    // keep track of stored docs and sort order
     this.dataIds = {};
+    this.sortIndices = [];
+    this.ready = false;
+    // create a minimongo collection for this subscription
     anyDb.cache.addCollection(name);
     this.collection = anyDb.cache[name];
-    this.ready = false;
 
     // onChange listeners, invoked when anything is added, removed or changed in associated collections
     this.listeners = {};
@@ -41,76 +47,25 @@ class Subscription {
     });
   }
 
-  /* these would be modified if switching to minimongo */
-  addedBefore(id, fields, before) {
-    let doc = fields;
-    doc._id = id;
-    // let dataIds know there's a new doc
-    this.dataIds[id] = true;
-    if (before === null) {
-      // when adding a new doc to the end
-      this.data = this.data.concat(doc);
-    } else {
-      // when adding a new doc in the middle of the sub
-        // 
-
-      let index = findDocIdIndex(before, this.data);
-      if (index < 0) { throw new Error('Expected to find before id', before); }
-      this.data = R.clone(sub.data);
-      this.data.splice(index, 0, doc);
-    }
-    this._dispatchChange();
-  }
-
-  movedBefore(id, before) {
-    let fromIndex = findDocIdIndex(id, this.data);
-    if (fromIndex < 0) { throw new Error('Expected to find id', id); }
-    this.data = R.clone(this.data);
-    doc = this.data[fromIndex];
-    this.data.splice(fromIndex, 1);
-    if (before === null) {
-      this.data.push(doc);
-    } else {
-      let toIndex = findDocIdIndex(before, this.data);
-      if (toIndex < 0) { throw new Error('Expected to find before id', before); }
-      this.data.splice(toIndex, 0, doc);
-    }
-    this._dispatchChange();
-  }
-
-  changed(id, fields) {
-    this.data = R.clone(this.data);
-    let index = findDocIdIndex(id, this.data);
-    if (index < 0) { throw new Error('Expected to find id', id); }
-    changeDoc(this.data[id], fields);
-    this._dispatchChange();
-  }
-
-  removed(id) {
-    let index = findDocIdIndex(id, this.data);
-    if (index < 0) { throw new Error('Expected to find id', id); }
-    // oldDoc is currently unused
-    let oldDoc = this.data.splice(index, 1)[0];
-    delete this.dataIds[id];
-    this._dispatchChange();
-  }
-
   stop() {
-    this.listeners = {};
-    // handle.stop();   // original
-    // TODO: how do we stop the ddp subscriptions?
     this.ddp.unsubscribe(this.subId);
-    this.data = [];
+    for (let id in this.dataIds) {
+      this.collection.remove(id);
+    }
+    // TODO: deleting collection
+    // delete this.collection
+    // delete this.anyDb.cache[this.name]
     this.dataIds = {};
+    this.sortIndices = [];
+    this.listeners = {};
   }
 
   reset() {
-    this.data = [];
     this.dataIds = {};
     // this._dispatchChange();
   }
 
-  /** 
+  /**
    * Sets a listener to be run the entire subscription's dataset when the subscription data changes
    * returns an object
   */
@@ -125,11 +80,101 @@ class Subscription {
     };
   }
 
+  /**********************************************/
+  /*                  helpers                   */
+  /**********************************************/
+
+  addedBefore(id, fields, before) {
+    let doc = fields;
+    doc._id = id;
+    let sortIndex;
+    this.dataIds[id] = true;
+
+    if (before === null) {
+      // if adding the new doc to the end
+      sortIndex = newSortIndex(null, this.sortIndices);
+      this.sortIndices.push({
+        _id: id,
+        sortIndex: sortIndex
+      });
+    } else {
+      // get index of the following doc by its id
+      let index = findIndexById(before, this.sortIndices);
+      // TODO: why do we need to throw these errors?
+      if (index < 0) { throw new Error('Expected to find before id', before); }
+
+      sortIndex = newSortIndex(index, this.sortIndices);
+      this.sortIndices.splice(index, 0, {
+        _id: id,
+        sortIndex: sortIndex
+      });
+    }
+
+    doc._sortIndices = doc._sortIndices || {};
+    doc._sortIndices[this.name] = sortIndex;
+    this.collection.upsert(doc);
+    this._dispatchChange();
+  }
+
+  movedBefore(id, before) {
+    let fromIndex = findIndexById(id, this.sortIndices);
+    if (fromIndex < 0) { throw new Error('Expected to find id', id); }
+    this.sortIndices.splice(fromIndex, 1);
+    let sortIndex;
+
+    if (before === null) {
+      // if moving doc to the end
+      sortIndex = newSortIndex(null, this.sortIndices);
+      this.sortIndices.push({
+        _id: id,
+        sortIndex: sortIndex
+      });
+    } else {
+      // if moving doc within the collection
+      let toIndex = findIndexById(before, this.sortIndices);
+      if (toIndex < 0) { throw new Error('Expected to find before id', before); }
+
+      sortIndex = newSortIndex(toIndex, this.sortIndices);
+      this.sortIndices.splice(toIndex, 0, {
+        _id: id,
+        sortIndex: sortIndex
+      });
+    }
+
+    let doc = this.collection.get(id);
+    doc._sortIndices[this.name] = sortIndex;
+    this.collection.upsert(doc);
+    this._dispatchChange();
+  }
+
+  changed(id, fields) {
+    let index = findIndexById(id, this.sortIndices);
+    if (index < 0) { throw new Error('Expected to find id', id); }
+
+    let doc = this.collection.get(id);
+    changeDoc(doc, fields);
+    this.collection.upsert(doc)
+    this._dispatchChange();
+  }
+
+  removed(id) {
+    let index = findIndexById(id, this.sortIndices);
+    if (index < 0) { throw new Error('Expected to find id', id); }
+
+    this.sortIndices.splice(index, 1);
+    delete this.dataIds[id];
+    this.collection.remove({_id: id});
+    this._dispatchChange();
+  }
+
   // calls a listener with the entire subscription's data
+  // TODO: may not be necessary as we can subscribe to changes on the collection, not only the subscription
   _dispatchChange() {
     if (!this.ready) { return; }
     for (let id in this.listeners) {
-      this.listeners[id](R.clone(this.data));
+      let sortOptions = { sort: {} };
+      sortOptions['_sortIndices.' + this.name] = 1;
+      this.listeners[id](R.clone(this.collection.find({}, sortOptions)));
     }
   }
 }

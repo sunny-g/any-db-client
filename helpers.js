@@ -1,9 +1,18 @@
-var { U, R } = require('./utils.js');
+// polyfill for React Native
+if (process.nextTick === undefined) {
+  process.nextTick = setImmediate;
+}
+
+const MINKEY = 0;
+const MIDKEY = 1073741824
+const MAXKEY = 2147483648
+let { U, R } = require('./utils.js');
 
 module.exports = {
   parseDDPMsg: parseDDPMsg,
-  findDocIdIndex: findDocIdIndex,
-  changeDoc: changeDoc
+  findIndexById: findIndexById,
+  changeDoc: changeDoc,
+  newSortIndex: newSortIndex
 };
 
 // TODO: ANNOTATE THIS
@@ -42,17 +51,36 @@ function parseDDPMsg(data) {
   };
 }
 
-// this would be modified if switching to minimongo
 /**
- * finds index of a document by its id
+ * Finds index of a document by its _id property
  */
-function findDocIdIndex(id, docs) {
+function findIndexById(id, docs) {
   for (let i = 0; i < docs.length; i++) {
     if (docs[i]._id === id) {
       return i;
     }
   }
   return -1;
+}
+
+/**
+ * Returns a sortIndex either in between two other keys or at the end of the keys
+ */
+function newSortIndex(index, keyList) {
+  if (index === null && keyList.length === 0) {
+    // if first in list, return the MIDKEY
+    return MIDKEY;
+  } else if (index === null) {
+    // if added to end, return a key between the last and the MAXKEY
+    return ((keyList[keyList.length - 1].sortIndex / 2) | 0) +
+      (((MAXKEY) / 2) | 0);
+  } else {
+    // if adding before an index, return a key between it's sortIndex and the the previous sortIndex
+    let STARTKEY = keyList[index - 1] !== undefined ?
+      STARTKEY = keyList[index - 1].sortIndex : MINKEY;
+    return ((keyList[index].sortIndex / 2) | 0) + 
+      ((STARTKEY / 2) | 0);
+  }
 }
 
 /**
@@ -66,9 +94,8 @@ function changeDoc(doc, fields) {
 /*                   helpers                   */
 /***********************************************/
 
-// TODO: ANNOTATE THIS
 /**
- * unflatten DDP fields into a deep object
+ * Unflatten DDP fields into a deep object
  * e.g. any-db.1: value >> any-db: {1: value}
  */
 function fields2Obj(fields) {
@@ -95,7 +122,6 @@ function fields2Obj(fields) {
   return dest;
 }
 
-// TODO: annotate this
 function parseId(id) {
   if (id === '-') {
     return undefined;

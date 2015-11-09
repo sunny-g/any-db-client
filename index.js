@@ -1,78 +1,122 @@
-const Subscription = require('./subscription.js');
 const { R } = require('./utils.js');
 const { parseDDPMsg } = require('./helpers.js');
+const Subscription = require('./subscription.js');
+const Store = require('./store.js');
 const minimongo = require('minimongo-cache');
 
-let AnyDb = {};
-AnyDb.initialize = function(opts) {
-  // TODO: new minimongo() as the db's storage?
-  this.DB_KEY = opts.DB_KEY || 'any-db';
-  this.ddp = opts.ddpClient;
-  this.debug = opts.debug || false;
-  this.subs = {};
-  this.cache = new minimongo();
+class AnyDb {
+  constructor(opts) {
+    this.DB_KEY = opts.DB_KEY || 'any-db';
+    this.ddp = opts.ddpClient;
+    this.debug = opts.debug || false;
+    this.subs = {};
+    this.cache = new minimongo();
 
-  // handle all DDP messages
-  this.ddp.on('message', (data) => {
-    let msg = JSON.parse(data);
-    if (msg.id === undefined) { return; }
+    // handle all DDP messages
+    this.ddp.on('message', (data) => {
+      let msg = JSON.parse(data);
+      if (msg.collection !== this.DB_KEY) {
+        // handle data the way it would be handled with node-ddp-client and minimongo-cache
+        return;
+      }
+      if (msg.id === undefined) {
+        return;
+      }
 
-    let {
-      id,
-      // TODO: better name for fields?
-      fields,
-      positions,
-      // TODO: better name for cleared?
-      cleared
-    } = parseDDPMsg.call(this, msg);
+      let {
+        id,
+        fields,
+        positions,
+        cleared
+      } = parseDDPMsg.call(this, msg);
 
-    log('id:', id, 'fields:', fields, 'positions:', positions, 'cleared:', cleared, 'original msg:', msg);
+      if (this.debug) {
+        console.groupCollapsed('ddp message:');
+          console.log('id:', id)
+          console.log('fields:', fields);
+          console.log('positions:', positions);
+          console.log('cleared:', cleared);
+          console.log('original msg:', msg);
+        console.groupEnd();
+      }
 
-    if (msg.msg === 'added') {
-      return added.call(this, id, fields, positions);
-    } else if (msg.msg === 'changed') {
-      return changed.call(this, id, fields, positions, cleared);
-    } else if (msg.msg === 'removed') {
-      return removed.call(this, id);
-    } else {
-      console.error('unhandled DDP msg', msg);
-    }
-  });
-};
-
-/**
- * returns {Promise}
- */
-AnyDb.subscribe = function(name, query) {
-  return new Promise((resolve, reject) => {
-    var sub = new Subscription(name, query, this, (err, sub) => {
-      if (err) {
-        reject(err);
+      if (msg.msg === 'added') {
+        return added.call(this, id, fields, positions);
+      } else if (msg.msg === 'changed') {
+        return changed.call(this, id, fields, positions, cleared);
+      } else if (msg.msg === 'removed') {
+        return removed.call(this, id);
       } else {
-        sub.stop = () => {
-          Subscription.prototype.stop.call(sub);
-          delete this.subs[sub.subId];
-        }
-        resolve(sub);
+        console.error('unhandled DDP msg', msg);
       }
     });
-    // add this subscription to our anyDb's subs
-    this.subs[sub.subId] = sub;
-  });
-};
-
-/**
- * Finds a document by id throughout all subscription's datasets
- */
-AnyDb.find = function(id) {
-  for (let subId in this.subs) {
-    if (this.subs[subId][id]) {
-      let index = findDocIdIndex(id, this.data);
-      return R.clone(this.data[index]);
-    }
   }
-  return undefined;
-};
+
+  /**
+   * returns {Promise}
+   */
+  subscribe(name, query) {
+    query = query || {};
+    return new Promise((resolve, reject) => {
+      let sub = new Subscription(name, query, this, (err, sub) => {
+        if (err) {
+          console.log('error in subscribing', err);
+          reject(err);
+        } else {
+          sub.stop = () => {
+            Subscription.prototype.stop.call(sub);
+            delete this.subs[sub.subId];
+          }
+          resolve(sub);
+        }
+      });
+      // add this subscription to our anyDb's subs
+      this.subs[sub.subId] = sub;
+    });
+  }
+
+  /**
+   * Returns a Store with registered actions on some portion of the cache
+   */
+  createStore(actions) {
+    return new Store(this, actions);
+  }
+
+  /**
+   * Retrieves a document by id from anywhere in the cache
+   */
+  // TODO: ??? this could get a doc with less or irrelevant info
+  findInCache(id) {
+    for (let collection in this.cache.collections) {
+      let doc = this.cache[collection].get(id);
+      if (doc) {
+        return doc;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Retrieves a document using Minimongo's find from within a given collection
+   */
+  find(collectionName, ...options) {
+    return this.cache[collectionName].find(...options);
+  }
+
+  /**
+   * Upsert this doc into some collection
+   */
+  upsert(collectionName, doc) {
+    return this.cache[collectionName].upsert(doc);
+  }
+
+  /**
+   * Remove the doc(s) that match the selector from some collection
+   */
+  remove(collectionName, selector) {
+    return this.cache[collectionName].remove(selector);
+  }
+}
 
 /***********************************************/
 /*               message handlers              */
@@ -97,9 +141,8 @@ function changed(id, fields, positions, cleared) {
     }
   }
 
-  // TODO: annotate this
   // this handles position changes
-  let memoizedFind = R.memoize(this.find);
+  let memoizedFind = R.memoize(this.findInCache);
   for (let subId in positions) {
     let before = positions[subId];
     let sub = this.subs[subId];
@@ -107,10 +150,12 @@ function changed(id, fields, positions, cleared) {
     // sub could be null if logout and in really quickly
     if (!sub) { return; }
     if (sub.dataIds[id]) {
+      // if the doc exists in this sub, move it to a new location
       sub.movedBefore(id, before);
     } else {
+      // if the doc doesnt exist in this sub, find it from another sub and add it to this sub
       let doc = memoizedFind(id);
-      sub.addedBefore(id, R.omit(['_id'], doc), before);
+      sub.addedBefore(id, doc, before);
     }
   }
 

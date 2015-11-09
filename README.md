@@ -31,6 +31,10 @@ AnyDb.initialize({
   debug: true   // optional, for extra logging
 });
 
+```
+
+To subscribe to an [ccorcos:any-db](https://github.com/ccorcos/meteor-any-db) publication:
+```js
 // using a subset of ES7...
 (async function() {
   try {
@@ -48,6 +52,51 @@ AnyDb.initialize({
     // handle errors
   }
 })();
+```
+
+You can also create ``Stores``, which you can use to combine multiple collections, creating 'actions' and turn them into observables:
+
+```js
+var Users = AnyDb.createStore({
+  observe: () => {
+    return this.getMergedUsers();
+  }
+
+  subscribe: (newDocs, oldDocs) => {
+    this.setState({
+      users: newDocs.map((user) => {
+          return user.likes.
+        })
+      });
+    });
+  }
+
+  getMergedUsers: () => { return this.merge(getMongoUsers({}), getNeo4jUsers({})); }
+  getMongoUsers: (query) => { return AnyDb.cache.allMongoUsers.find(query); }
+  getNeo4jUsers: (query) => { return AnyDb.cache.allNeo4jUsers.find(query); }
+})
+
+// OR: just
+/* 
+Users.observe(() => {
+  return Users.getMergedUsers();
+});
+Users.subscribe(onChange, context)
+ */
+
+var Todos = AnyDb.createStore({
+  getTodos: function(authorId) {
+    return cache.todos.find({authorId: authorId}, {sort: {completed: 1, timestamp: -1}});
+  },
+
+  // Mutation is straightforward.
+  markComplete: function(todoId) {
+    cache.todos.upsert({
+      _id: todoId,
+      completed: true,
+    });
+  },
+})
 ```
 
 On the server, set up your publications as you would with [ccorcos:any-db](https://github.com/ccorcos/meteor-any-db) (this example uses [ostrio:neo4jdriver](https://github.com/VeliovGroup/ostrio-neo4jdriver), but you can use any Fiber-wrapped database library):
