@@ -1,8 +1,9 @@
-var { U, R } = require('./utils.js');
+const { U, R } = require('./utils.js');
+const { extendObservable } = require('mobservable');
 
 module.exports = {
   parseDDPMsg: parseDDPMsg,
-  findDocIdIndex: findDocIdIndex,
+  findDocIndexById: findDocIndexById,
   changeDoc: changeDoc
 };
 
@@ -42,11 +43,10 @@ function parseDDPMsg(data) {
   };
 }
 
-// this would be modified if switching to minimongo
 /**
  * finds index of a document by its id
  */
-function findDocIdIndex(id, docs) {
+function findDocIndexById(id, docs) {
   for (let i = 0; i < docs.length; i++) {
     if (docs[i]._id === id) {
       return i;
@@ -56,10 +56,10 @@ function findDocIdIndex(id, docs) {
 }
 
 /**
- * deep extends doc with fields, deletes undefined values
+ * deep extends doc with fields, makes all new fields observable, deletes undefined values
  */
 function changeDoc(doc, fields) {
-  return deleteUndefined(U.extendDeep(doc, fields));
+  return deleteUndefined(extendObservable(doc, fields));
 }
 
 /***********************************************/
@@ -116,8 +116,7 @@ function deleteUndefined(doc) {
   for (let key in doc) {
     let value = doc[key];
     if (U.isPlainObject(value)) {
-      // why are we setting the key to undefined??
-      doc[key] = deleteUndefined(value);
+      deleteUndefined(value);
     } else if (value === undefined) {
       delete doc[key];
     }

@@ -5,6 +5,7 @@
   "main": "index.js",
   "dependencies": {
     "minimongo-cache": "0.0.35",
+    "mobservable": "^1.0.5",
     "ramda": "^0.18.0",
     "random-js": "^1.0.8",
     "underscore": "^1.8.3"
